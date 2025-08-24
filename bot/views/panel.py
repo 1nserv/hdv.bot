@@ -9,18 +9,19 @@ from bot import embeds, settings
 from bot.utils import entities, state
 
 class SubmitCandidacyModal(discord.ui.Modal):
-    def __init__(self, party: nsa.Party):
+    def __init__(self, candidate: nsa.Candidate, election: nsa.Vote = None):
         super().__init__(title = "Candidater aux élections")
 
-        self.party = party
+        self.candidate = candidate
 
         self.election = discord.ui.InputText(
             style = discord.InputTextStyle.short,
             label = "ID de l'élection",
-            placeholder = "NSID fourni par un Sage ou un bot",
+            placeholder = "NSID fourni par un Sage ou un bot (entre 10 et 12 chiffres)",
             required = True,
-            min_length = 4,
-            max_length = 16
+            min_length = 10,
+            max_length = 12,
+            value = election.id if election else None
         )
 
         self.discours = discord.ui.InputText(
@@ -37,182 +38,78 @@ class SubmitCandidacyModal(discord.ui.Modal):
     async def callback(self, itx: discord.Interaction):
         await itx.response.defer()
 
-        user = entities.get_entity(NSID(itx.user.id))
-        party = self.party
+        user = entities.get_user(NSID(itx.user.id))
+        candidate = self.candidate
 
-        election = state.alias(user.id).get_election(self.election.value)
+        if candidate:
+            party = candidate.party
+        else:
+            party = None
 
-        election.submit_candidacy()
-
-        await itx.followup.send("T'es retenu khoya")
-
-class SubmitPartyModal(discord.ui.Modal):
-    def __init__(self, group: nsa.Organization):
-        super().__init__(title = f"Enregistrement du parti {group.name}")
-
-        self.group = group
-
-        self.color = discord.ui.InputText(
-            style = discord.InputTextStyle.short,
-            label = "Couleur",
-            placeholder = "#123ABC",
-            required = True,
-            min_length = 7,
-            max_length = 7
-        )
-
-        self.motto = discord.ui.InputText(
-            style = discord.InputTextStyle.singleline,
-            label = "Devise du parti",
-            placeholder = "L'onion fait l'afro",
-            required = False,
-            max_length = 64
-        )
-
-        self.prom = discord.ui.InputText(
-            style = discord.InputTextStyle.paragraph,
-            label = "Discours de promotion",
-            placeholder = "#123ABC",
-            required = False,
-            max_length = 1024
-        )
-
-        self.add_item(self.color)
-        self.add_item(self.motto)
-        self.add_item(self.prom)
-
-    async def callback(self, itx: discord.Interaction):
-        await itx.response.defer()
-
-        user = entities.get_entity(itx.user.id)
-        grp = self.group
-
-        if len(grp.members) + 1 < 1:
-            await itx.followup.send(f"Vous n'avez pas assez de membres pour enregistrer un parti ({len(grp.members) + 1}/2 members requis)")
+        if not party:
+            await itx.followup.send("Vous devez être membre d'un parti pour vous présenter.")
             return
 
-        try:
-            _color = int(self.color.value[1:], 16)
-        except:
-            await itx.followup.send(f"La couleur `{self.color.value}` n'est pas au format hexadécimal.")
-            return
+        group = entities.get_group(candidate.party.id)
 
+        # Modification du vote
+        vote = state.get_vote(self.election.value)
+        vote.options[user.id] = nsa.VoteOption(f"{user.name} ({group.name})")
+        vote.save()
 
-        party = state.alias(user.id).register_party(
-            id = grp.id,
-            color = _color,
-            motto = self.motto.value
-        )
+        # Update du profil de candidature
+        candidate.current = vote.id
+        candidate.save()
 
+        channel = itx.guild.get_channel(settings.CHANNELS['party_echo'])
 
-        # Création du rôle du parti
-
-        role = await itx.guild.create_role(
-            name = grp.name,
-            hoist = True,
-            mentionable = False,
-            color = _color
-        )
-
-        grp.add_link('role', role.id)
-
-
-        # Création du forum
-
-        __party_cgr = itx.guild.get_channel(settings.CATEGORIES['parties'])
-
-        channel = await __party_cgr.create_forum_channel(
-            name = grp.name,
-            position = 2
-        )
-
-        overwrite = {
-            itx.guild.default_role: discord.PermissionOverwrite(view_channel = False, send_messages = False),
-            role: discord.PermissionOverwrite(view_channel = True, send_messages = True)
-        }
-
-        for role, perms in overwrite.items():
-            await channel.set_permissions(role, overwrite = perms)
-
-        grp.add_link('channel', channel.id)
-
-
-        await channel.create_thread(
-            name = "Général",
-            content = role.mention,
-            embed = embeds.parties.welcomeEmbed(grp)
-        )
-
-        th_infos = await channel.create_thread(
-            name = "Informations",
-            content = role.mention,
-            embed = embeds.parties.partyCreatedEmbed(grp)
-        )
-
-        await th_infos.edit(pinned = True, locked = True)
-
-        grp.add_link('info_thread', th_infos.id)
-
-
-        # Annonce de la nouvelle
-
-        __echo__channel = await itx.guild.get_channel(settings.CHANNELS['party_echo'])
-        await __echo__channel.send(embed = embeds.parties.partyCreated_LOG(grp, self.prom.value))
-
-
-        await itx.followup.send(embed = embeds.elections.panelEmbed(user, grp, party))
+        await itx.followup.send(embed = embeds.elections.candidacySubmittedEmbed(party), ephemeral = True)
+        await channel.send(embed = embeds.elections.newCandidateEmbed(
+            vote,
+            entities.get_group(party.id),
+            user = user,
+            candidate = candidate,
+            profile = itx.user,
+            speech = self.discours.value
+        ))
 
 class PanelView(ui.View):
     class SubmitCandidacyButton(discord.ui.Button):
-        def __init__(self, party: nsa.Party = None):
+        def __init__(self, candidate: nsa.Candidate = None):
             super().__init__(
                 style = discord.ButtonStyle.green,
                 label = "Se présenter",
-                disabled = mandate.get_phase() not in ('paix', 'undefined') or not party
+                disabled = mandate.get_phase() not in ('paix', 'undefined') or not candidate
             )
 
-            self.party = party
+            self.candidate = candidate
 
         async def callback(self, itx: discord.Interaction):
             cycle = mandate.get_cycle()
             phase = mandate.get_phase()
 
-            user = entities.get_entity(NSID(itx.user.id))
-            party = self.party
+            user = entities.get_user(NSID(itx.user.id))
+            candidate = self.candidate
 
-            if not (user and user.position.permissions.candidacies.append):
+            if not (user and user.position.permissions.citizen):
                 await itx.followup.send("Vous ne détenez pas la citoyenneté et ne pouvez donc pas vous présenter.")
                 return
 
-            if not party:
-                await itx.followup.send("Votre parti existe mais n'est pas confirmé.")
+            if not candidate.party:
+                await itx.followup.send("Vous devez être membre d'un parti pour vous présenter.")
                 return
 
             if phase not in ('paix', 'undefined'):
                 await itx.response.send_message("Vous ne pouvez pas candidater pendant les élections.")
                 return
 
-            await itx.response.send_modal(SubmitCandidacyModal(party))
+            await itx.response.send_modal(SubmitCandidacyModal(candidate))
 
-    class SubmitPartyButton(discord.ui.Button):
-        def __init__(self, group: nsa.Organization = None):
-            super().__init__(
-                style = discord.ButtonStyle.gray,
-                label = "Enregistrer son parti"
-            )
-
-            self.group = group
-
-        async def callback(self, itx: discord.Interaction):
-            await itx.response.send_modal(SubmitPartyModal(self.group))
-
-    def __init__(self, group: nsa.Organization = None, party: nsa.Party = None):
+    def __init__(self, group: nsa.Organization = None, candidate: nsa.Candidate = None):
         super().__init__(timeout = 300)
 
-        if party:
-            self.add_item(self.SubmitCandidacyButton(party))
-        elif group:
-            self.add_item(self.SubmitPartyButton(group))
+        if candidate and candidate.party:
+            self.add_item(self.SubmitCandidacyButton(candidate))
 
         self.group = group
-        self.party = party
+        self.candidate = candidate

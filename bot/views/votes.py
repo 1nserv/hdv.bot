@@ -24,7 +24,7 @@ class OpenVoteModal(discord.ui.Modal):
         )
 
         self.vote_start = discord.ui.InputText(
-            style = discord.InputTextStyle.long,
+            style = discord.InputTextStyle.singleline,
             label = "Début du vote",
             placeholder = "AAAA-MM-JJ",
             required = False,
@@ -33,7 +33,7 @@ class OpenVoteModal(discord.ui.Modal):
         )
 
         self.vote_duration = discord.ui.InputText(
-            style = discord.InputTextStyle.long,
+            style = discord.InputTextStyle.singleline,
             label = "Durée du vote",
             placeholder = "7d",
             required = False,
@@ -55,12 +55,12 @@ class OpenVoteModal(discord.ui.Modal):
     async def callback(self, itx: discord.Interaction):
         await itx.response.defer()
 
-        user = entities.get_entity(NSID(itx.user.id))
+        user = entities.get_user(NSID(itx.user.id))
 
         _opts = self.vote_options.value.split("\n")
         _start = self.vote_start.value
 
-        options = { nsa.NSID(random.randint(0x100000, 0xFFFFFF)): _opt for _opt in _opts }
+        options = _opts
 
         if _start == "now":
             start = round(time.time()) + 60
@@ -74,6 +74,7 @@ class OpenVoteModal(discord.ui.Modal):
             await itx.followup.send(embed = embeds.fail("La date du vote est inférieure à la date actuelle."), ephemeral = True)
             return
 
+
         try:
             _d = get_dt(self.vote_duration.value)
             end = start + _d
@@ -85,8 +86,9 @@ class OpenVoteModal(discord.ui.Modal):
             await itx.followup.send(embed = embeds.fail("La durée donnée n'est pas valide."), ephemeral = True)
             return
 
-        vote = state.alias(user.id).open_vote(
+        vote = state.open_vote(
             title = self.vote_title.value,
+            author = user.id,
             options = options,
             start = start,
             end = end
@@ -97,23 +99,35 @@ class OpenVoteModal(discord.ui.Modal):
 class ManageVoteView(ui.View):
     class AddVoteSelect(discord.ui.Select):
         def __init__(self, vote: nsa.Vote):
+            if vote.max_choices == 1:
+                _p = "Choisissez une option"
+            elif vote.min_choices == vote.max_choices:
+                _p = f"Choisissez {vote.min_choices} options"
+            elif vote.min_choices - vote.max_choices == 1:
+                _p = f"Choisissez {'une' if vote.min_choices == 1 else vote.min_choices} ou {vote.max_choices} options"
+            else:
+                _p = f"Choisissez entre {'une' if vote.min_choices == 1 else vote.min_choices} et {vote.max_choices} options"
+
             super().__init__(
-                placeholder = "Choisissez une option",
-                options = [ discord.SelectOption(value = _id, label = opt.title) for _id, opt in vote.options.items() ]
+                placeholder = _p,
+                options = [ discord.SelectOption(value = _id, label = opt.title) for _id, opt in vote.options.items() ],
+                max_values = vote.max_choices,
+                min_values = vote.min_choices
             )
 
             self.vote = vote
 
         async def callback(self, itx: discord.Interaction):
             await itx.response.defer(ephemeral = True)
-            user = entities.get_entity(NSID(itx.user.id))
+            user = entities.get_user(NSID(itx.user.id))
 
-            vote = state.alias(user.id).get_vote(self.vote.id)
-            vote.add_vote(self.values[0])
+            vote = state.get_vote(self.vote.id)
+            vote.add_votes(user.id, *tuple(self.values))
+            vote.save()
 
-            opt = vote.get(self.values[0])
+            opts = [ vote.get(v) for v in self.values ]
 
-            await itx.followup.send(embed = embeds.votes.voteSubmittedEmbed(vote, opt), ephemeral = True)
+            await itx.followup.send(embed = embeds.votes.voteSubmittedEmbed(vote, opts), ephemeral = True)
 
     class CloseVoteButton(discord.ui.Button):
         def __init__(self, vote: nsa.Vote):
@@ -127,34 +141,38 @@ class ManageVoteView(ui.View):
 
         async def callback(self, itx: discord.Interaction):
             await itx.response.defer(ephemeral = False)
-            user = entities.get_entity(NSID(itx.user.id))
+            user = entities.get_user(NSID(itx.user.id))
 
-            vote = state.alias(user.id).get_vote(self.vote.id)
+            if not user.position.permissions.manage_votes:
+                await itx.followup.send(embed = embeds.error("Vous n'avez pas la permission de gérer les votes."), ephemeral = True)
+                return
+
+            vote = state.get_vote(self.vote.id)
             vote.close()
 
             await itx.followup.send(embed = embeds.success(), ephemeral = True)
 
 
-    class ConvertToElectionButton(discord.ui.Button):
+    class ConvertButton(discord.ui.Button):
         def __init__(self, vote: nsa.Vote):
             super().__init__(
                 style = discord.ButtonStyle.gray,
-                label = "Convertir en élection",
+                label = "Convertir",
                 row = 2
             )
 
             self.vote = vote
 
         async def callback(self, itx: discord.Interaction):
-            await itx.response.send_message(embed = embeds.elections.elTypePresentationEmbed(), view = ManageElectionView(self.vote), ephemeral = True)
+            await itx.response.send_message(embed = embeds.elections.elTypePresentationEmbed(), view = ConvertVoteView(self.vote), ephemeral = True)
 
     def __init__(self, vote: nsa.Vote, author: nsa.User):
         super().__init__(timeout = 120, disable_on_timeout = True)
 
-        if vote.endDate <= round(time.time()):
+        if vote.end_date <= round(time.time()):
             return
 
-        if len(vote.options) > 0:
+        if len(vote.options) > 1 and vote.start_date < round(time.time()):
             self.add_item(self.AddVoteSelect(vote))
 
         __close_button_added: bool = False
@@ -163,26 +181,23 @@ class ManageVoteView(ui.View):
             self.add_item(self.CloseVoteButton(vote))
             __close_button_added = True
 
-        if author.position.permissions.candidacies.manage:
-            try:
-                election = state.get_election(vote.id)
-            except:
-                election = None
-
-            if not election:
-                self.add_item(self.ConvertToElectionButton(vote))
+        if author.position.permissions.manage_votes:
+            if vote.type == 'normal':
+                self.add_item(self.ConvertButton(vote))
 
             if not __close_button_added:
                 self.add_item(self.CloseVoteButton(vote))
 
-class ManageElectionView(discord.ui.View):
-    class ChooseElectionSelect(discord.ui.Select):
+class ConvertVoteView(discord.ui.View):
+    class ChooseTypeSelect(discord.ui.Select):
         def __init__(self, vote: nsa.Vote):
             super().__init__(
-                placeholder = "Choissez un type d'élection",
+                placeholder = "Choisissez un type de vote",
                 options = [
                     discord.SelectOption(value = "full", label = "Élections présidentielles"),
-                    discord.SelectOption(value = "partial", label = "Élections législatives")
+                    discord.SelectOption(value = "partial", label = "Élections législatives"),
+                    discord.SelectOption(value = "2pos", label = "Vote pour ou contre"),
+                    discord.SelectOption(value = "3pos", label = "Vote pour ou contre (avec vote blanc)"),
                 ]
             )
 
@@ -190,21 +205,81 @@ class ManageElectionView(discord.ui.View):
 
         async def callback(self, itx: discord.Interaction):
             await itx.response.defer(ephemeral = True)
-            user = entities.get_entity(NSID(itx.user.id))
+            user = entities.get_user(NSID(itx.user.id))
+
+            if not user.position.permissions.manage_votes:
+                await itx.followup.send(embed = embeds.error("Vous n'avez pas la permission de gérer les votes."), ephemeral = True)
+                return
+
             vote = self.vote
 
-            election = state.alias(user.id).open_election(
-                vote,
-                start = vote.startDate,
-                full = self.values[0] == "full"
-            )
+            vote.type = self.values[0]
+
+            if vote.type == 'full':
+                vote.options = {
+                    nsa.NSID(0x0): nsa.VoteOption("S'abstient")
+                }
+
+                vote.majority = 50
+
+                vote.min_choices = 1
+                vote.max_choices = 1
+
+                vote.anonymous = True
+                vote.voters = []
+
+            elif vote.type == 'partial':
+                vote.options = {
+                    nsa.NSID(0x0): nsa.VoteOption("S'abstient")
+                }
+
+                vote.majority = 50
+
+                vote.min_choices = 1
+                vote.max_choices = 2
+
+                vote.anonymous = True
+                vote.voters = []
+
+            elif vote.type == '2pos':
+                vote.options = {
+                    nsa.NSID(0x0): nsa.VoteOption("Pour"),
+                    nsa.NSID(0x1): nsa.VoteOption("Contre")
+                }
+
+                vote.majority = 60
+
+                vote.min_choices = 1
+                vote.max_choices = 1
+
+                vote.anonymous = False
+                vote.voters = []
+
+            elif vote.type == '3pos':
+                vote.options = {
+                    nsa.NSID(0x0): nsa.VoteOption("Pour"),
+                    nsa.NSID(0x1): nsa.VoteOption("Contre"),
+                    nsa.NSID(0x2): nsa.VoteOption("S'abstient")
+                }
+
+                vote.majority = 60
+
+                vote.min_choices = 1
+                vote.max_choices = 1
+
+                vote.anonymous = False
+                vote.voters = []
+
+            vote.save()
+
+            if vote.type in ('full', 'partial'):
+                await itx.channel.send(embed = embeds.elections.elPlannedEmbed(vote))
 
             await itx.followup.send(embed = embeds.success(), ephemeral = True)
-            await itx.channel.send(embed = embeds.elections.elPlannedEmbed(election, vote))
 
     def __init__(self, vote: nsa.Vote):
         super().__init__(timeout = 120, disable_on_timeout = True)
 
-        self.add_item(self.ChooseElectionSelect(vote))
+        self.add_item(self.ChooseTypeSelect(vote))
 
         self.vote = vote

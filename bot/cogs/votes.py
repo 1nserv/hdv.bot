@@ -16,26 +16,32 @@ class VotesCog(commands.Cog):
 
     @commands.slash_command(name = "vote")
     async def vote(self, ctx: discord.ApplicationContext, vote: str):
-        await ctx.defer()
-        _vote = NSID(vote)
-
-        user = entities.get_entity(NSID(ctx.author.id))
-
-        vote: nsa.Vote = state.alias(user.id).get_vote(_vote)
+        log(f"{ctx.user.name} ({NSID(ctx.user.id)}) utilise /vote")
         try:
-            election: nsa.Election = state.alias(user.id).get_election(_vote)
-        except:
-            election = None
+            await ctx.defer()
+            _vote = NSID(vote)
 
-        if not vote:
-            await ctx.send_followup(f"Le vote {_vote} n'existe pas.")
-            return
+            user = entities.get_user(NSID(ctx.author.id))
 
-        await ctx.send_followup(embed = embeds.votes.voteProposalsEmbed(vote, election), view = vw.ManageVoteView(vote, user), ephemeral = True)
+            vote: nsa.Vote = state.get_vote(_vote)
+
+            if not vote:
+                await ctx.send_followup(f"Le vote {_vote} n'existe pas.")
+                return
+
+            await ctx.send_followup(embed = embeds.votes.voteProposalsEmbed(vote), view = vw.ManageVoteView(vote, user), ephemeral = True)
+        except Exception as e:
+            await ctx.channel.send(embed = embeds.fail("Une erreur est survenue."))
+            fatalerror(e)
 
     @vote_cmds.command(name = "open")
     async def open_vote(self, ctx: discord.ApplicationContext):
-        await ctx.send_modal(vw.OpenVoteModal())
+        log(f"{ctx.user.name} ({NSID(ctx.user.id)}) utilise /open")
+        try:
+            await ctx.send_modal(vw.OpenVoteModal())
+        except Exception as e:
+            await ctx.channel.send(embed = embeds.fail("Une erreur est survenue."))
+            fatalerror(e)
 
 
 def setup(bot):

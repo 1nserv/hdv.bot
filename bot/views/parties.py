@@ -4,32 +4,155 @@ import discord
 
 import nsarchive as nsa
 
-from bot import embeds
-from bot.utils import entities
+from bot import embeds, settings
+from bot.utils import entities, state
 
 
 class NewPartyModal(discord.ui.Modal):
     def __init__(self):
         super().__init__(title = "Créer un parti")
-        self.name = discord.ui.InputText(label = "Nom du parti", placeholder = "Entrez un nom ici...", max_length = 32, required = True)
+
+        self.name = discord.ui.InputText(
+            label = "Nom du parti",
+            placeholder = "Entrez un nom ici...",
+            max_length = 32,
+            required = True
+        )
+
+        self.color = discord.ui.InputText(
+            style = discord.InputTextStyle.short,
+            label = "Couleur",
+            placeholder = "#123ABC",
+            required = True,
+            min_length = 7,
+            max_length = 7
+        )
+
+        self.motto = discord.ui.InputText(
+            style = discord.InputTextStyle.singleline,
+            label = "Devise du parti",
+            placeholder = "L'onion fait l'afro",
+            required = False,
+            max_length = 64
+        )
+
+        self.prom = discord.ui.InputText(
+            style = discord.InputTextStyle.paragraph,
+            label = "Discours de promotion",
+            placeholder = "Faites la promo de votre parti",
+            required = False,
+            max_length = 1024
+        )
 
         self.add_item(self.name)
+        self.add_item(self.color)
+        self.add_item(self.motto)
+        self.add_item(self.prom)
 
     async def callback(self, itx: discord.Interaction):
-        await itx.response.defer()
+        await itx.response.defer(ephemeral = True)
+        user = entities.get_user(nsa.NSID(itx.user.id))
 
-        owner = entities.get_entity(nsa.NSID(itx.user.id))
-
-        if owner is None:
+        if user is None:
             await itx.followup.send(embed = embeds.res.failEmbed("Vous n'avez pas la permission de créer un parti."), ephemeral = True)
             return
 
-        if not owner.position.permissions.organizations.append:
+        if not user.position.permissions.create_groups:
             await itx.followup.send(embed = embeds.res.failEmbed("Vous n'avez pas la permission de créer un parti."), ephemeral = True)
             return
 
-        _id = nsa.NSID(itx.user.id // round(time.time()))
 
-        org = entities.alias(owner.id).create_entity(_id, self.name.value, 'organization', 'parti')
+        # Création du groupe associé
 
-        await itx.followup.send(f"Votre parti est créé sous l'identifiant `{org.id}`. Faites `/panel` ou `/group info` pour le voir.", delete_after = 60)
+        _id = nsa.NSID(round(time.time() * 1000))
+        grp = entities.create_group(_id, self.name.value, 'parti')
+        grp.set_owner(user)
+
+
+        # Création du parti
+
+        try:
+            _color = int(self.color.value[1:], 16)
+        except:
+            await itx.followup.send(embed = embeds.fail(f"La couleur `{self.color.value}` n'est pas au format hexadécimal."))
+            return
+
+        party = state.register_party(
+            id = grp.id,
+            color = _color,
+            motto = self.motto.value
+        )
+
+
+        # Update du profil candidat
+
+        candidate = state.get_candidate(user.id)
+
+        if candidate:
+            candidate.party = party
+            candidate.save()
+        else:
+            candidate = state.add_candidate(user.id, party)
+
+
+        # Création du rôle du parti
+
+        role = await itx.guild.create_role(
+            name = grp.name,
+            hoist = True,
+            mentionable = False,
+            color = _color
+        )
+
+        __sep_role: discord.Role = itx.guild.get_role(settings.ROLES['party_sep'])
+
+        await role.edit(position = __sep_role.position)
+
+        await itx.user.add_roles(role)
+
+        grp.add_link('role', role.id)
+
+
+        # Création du forum
+
+        __party_cgr = itx.guild.get_channel(settings.CATEGORIES['parties'])
+
+        channel = await __party_cgr.create_forum_channel(
+            name = grp.name,
+            position = 2
+        )
+
+        overwrite = {
+            itx.guild.default_role: discord.PermissionOverwrite(view_channel = False, send_messages = False),
+            role: discord.PermissionOverwrite(view_channel = True, send_messages = True)
+        }
+
+        for role, perms in overwrite.items():
+            await channel.set_permissions(role, overwrite = perms)
+
+        grp.add_link('channel', channel.id)
+
+
+        await channel.create_thread(
+            name = "Général",
+            content = role.mention,
+            embed = embeds.parties.welcomeEmbed(grp)
+        )
+
+        th_infos = await channel.create_thread(
+            name = "Informations",
+            content = role.mention,
+            embed = embeds.parties.partyCreatedEmbed(grp)
+        )
+
+        await th_infos.edit(pinned = True, locked = True)
+
+        grp.add_link('info_thread', th_infos.id)
+
+
+        # Annonce de la nouvelle
+
+        __echo__channel = itx.guild.get_channel(settings.CHANNELS['party_echo'])
+        await __echo__channel.send(embed = embeds.parties.partyCreated_LOG(grp, self.prom.value))
+
+        await itx.followup.send(embed = embeds.success(), ephemeral = True)

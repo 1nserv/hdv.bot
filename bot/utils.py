@@ -6,6 +6,8 @@ import io
 import os
 from PIL import Image
 import re
+import time
+import traceback
 
 dotenv.load_dotenv(override = True)
 
@@ -14,8 +16,8 @@ import discord
 
 import nsarchive as nsa
 
-entities = nsa.EntityInterface(os.getenv('APP_URL'), os.getenv('API_KEY'))
-state = nsa.StateInterface(os.getenv('APP_URL'), os.getenv('API_KEY'))
+entities = nsa.EntityInterface(os.getenv("PATH"))
+state = nsa.StateInterface(os.getenv("PATH"))
 
 
 from bot import settings
@@ -125,3 +127,33 @@ def is_admin(ctx: discord.ApplicationContext) -> bool:
 
 def is_citoyen(user: nsa.User) -> bool:
     return user.get_level() >= settings.min_level_to_citoyen
+
+
+def log(text: str):
+    print(f"\033[1;34m[HDV - {time.strftime('%Y-%m-%d %H:%M:%S')}]\033[0m {text}")
+
+def warn(text: str):
+    print(f"\033[1;33m[HDV - {time.strftime('%Y-%m-%d %H:%M:%S')}]\033[0m {text}")
+
+def usererror(text: str):
+    print(f"\033[1;31m[HDV - {time.strftime('%Y-%m-%d %H:%M:%S')}]\033[0m {text}")
+
+def fatalerror(err: Exception):
+    _id = nsa.NSID(round(time.time() * 1000))
+    _path = os.path.join(os.getenv("PATH"), f"logs/{_id}.log")
+
+    with open(_path, "w") as f:
+        lines = [
+            f"{err.__class__.__name__} in bot HDV",
+            "",
+            f"Date: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Error: {err}",
+            "",
+            f"Traceback (most recent call last):"
+        ]
+
+        lines += traceback.extract_tb(err.__traceback__).format()
+
+        f.write('\n'.join(lines))
+
+    print(f"\033[1;31m[HDV - {time.strftime('%Y-%m-%d %H:%M:%S')}]\033[0m Fatal error (details available at '{_path}')")

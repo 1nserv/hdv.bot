@@ -9,29 +9,41 @@ from .func import *
 from bot import settings
 
 
-def voteProposalsEmbed(vote: nsa.Vote, election: nsa.Election = None) -> discord.Embed:
-    __started = vote.startDate <= time.time()
-    __closed = vote.endDate <= time.time()
+def voteProposalsEmbed(vote: nsa.Vote) -> discord.Embed:
+    __types = {
+        'normal': "Normal",
+        'full': "Présidentielles",
+        'partial': "Législatives",
+        '2pos': "Pour/Contre",
+        '3pos': "Pour/Contre/Blanc"
+    }
+    __started = vote.start_date <= time.time()
+    __closed = vote.end_date <= time.time()
 
     title = "Vote terminé" if __closed else vote.title
 
     if __started or __closed:
         __date_label = "Fin"
-        __date_value = vote.endDate
+        __date_value = vote.end_date
     else:
         __date_label = "Début"
-        __date_value = vote.startDate
+        __date_value = vote.start_date
 
-    _proposals = '\n'.join([ f"- {opt.title}" + (f" - **{opt.count:,} votes**".replace(',', ' ') if __closed else "") for opt in vote.options.values() ])
+    _count: str = lambda c: f" - **{c:,} votes**".replace(',', ' ') if __closed else ""
+
+    _proposals = '\n'.join([ f"- {opt.title}{_count(opt.count)}" for opt in vote.options.values() ])
 
     description = f"""
     **Auteur:** <@{int(vote.author, 16)}>
-    **Type:** {"Vote" if not election else "Présidentielles" if election.type == 'full' else "Législatives"}
+    **Type:** {__types[vote.type]}
     **{__date_label}:** <t:{__date_value}:f>
-
-    ### Options
-    {_proposals}
     """
+
+    if len(vote.options) > 0:
+        description += f"""
+        ### Options
+        {_proposals}
+        """
 
     return discord.Embed(
         title = title,
@@ -40,10 +52,10 @@ def voteProposalsEmbed(vote: nsa.Vote, election: nsa.Election = None) -> discord
         footer = discord.EmbedFooter(f"Vote n°{vote.id}")
     )
 
-def voteSubmittedEmbed(vote: nsa.Vote, option: nsa.VoteOption) -> discord.Embed:
+def voteSubmittedEmbed(vote: nsa.Vote, options: list[nsa.VoteOption]) -> discord.Embed:
     return discord.Embed(
         title = ":white_check_mark: Vote enregistré",
-        description = f"Vous avez voté pour l'option **{option.title}**.",
+        description = f"Vous avez voté pour les options suivantes:\n- " + "\n- ".join([ opt.title for opt in options ]),
         color = settings.BOT_COLOR,
         footer = discord.EmbedFooter(f"Vote n°{vote.id}")
     )

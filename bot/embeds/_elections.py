@@ -9,15 +9,17 @@ from .func import *
 from bot import settings
 
 
-def panelEmbed(user: nsa.User, group: nsa.Organization | None, party: nsa.Party | None) -> discord.Embed:
+def panelEmbed(user: nsa.User, group: nsa.Organization | None, candidate: nsa.Candidate | None) -> discord.Embed:
+    party = candidate.party if candidate else None
     title = f"Panel de {user.name}"
 
     description = f"""
-    **Parti:** {group.name if group else 'Aucun'}{' (non enregistré)' if group and not party else ''}
+    **Parti:** {group.name if group else 'Aucun'}
+    **Candidature:** {f"`{candidate.current}`" if candidate and candidate.current else "Aucune"}
     ### Infos du cycle
-    **Cycle actuel:** {mandate.get_cycle() + 1}
-    **Prochaines élections:** <t:{round(time.time()) + 86400 * ((28 - mandate.get_day()) % 28)}:f>
-    **Présidentielles:** <t:{round(time.time()) + 86400 * ((56 - mandate.get_day()) % 56)}:f>
+    **Cycle actuel:** Cycle n°{mandate.get_cycle() + 1}
+    **Législatives:** <t:{mandate.next_election()}:D>
+    **Présidentielles:** <t:{mandate.next_election('full')}:D>
     """
 
     if group:
@@ -39,6 +41,42 @@ def panelEmbed(user: nsa.User, group: nsa.Organization | None, party: nsa.Party 
         color = color
     )
 
+def candidacySubmittedEmbed(party: nsa.Party):
+    return discord.Embed(
+        description = ":white_check_mark: Votre candidature est retenue !",
+        color = party.color
+    )
+
+def newCandidateEmbed(
+        vote: nsa.Vote,
+        group: nsa.Organization,
+        user: nsa.User,
+        candidate: nsa.Candidate,
+        profile: discord.Member,
+        speech: str = None
+    ) -> discord.Embed:
+
+    if speech:
+        _speech = "“" + speech.replace('\n', ' ') + "”"
+    else:
+        _speech = "Aucun discours prononcé."
+
+    description = f"""
+    {profile.mention}, candidat.e du groupe **{group.name}**, souhaite se présenter aux prochaines élections {"présidentielles" if vote.type == "full" else "législatives"}.
+
+    > {_speech}
+    """
+
+    embed = discord.Embed(
+        title = f"Nouveau candidat: {user.name}",
+        description = description,
+        color = candidate.party.color,
+        footer = discord.EmbedFooter(f"Élection n°{vote.id}")
+    )
+
+    return embed.set_thumbnail(url = profile.avatar.url)
+
+
 def elTypePresentationEmbed() -> discord.Embed:
     description = """
     **Présidentielles:** Les élections présidentielles permettent d'élire le Président de la République. Elles ont lieu tous les 56 jours (2 cycles)
@@ -51,16 +89,16 @@ def elTypePresentationEmbed() -> discord.Embed:
         color = settings.BOT_COLOR
     )
 
-def elPlannedEmbed(election: nsa.Election, vote: nsa.Vote) -> discord.Embed:
-    __type = "Présidentielles" if election.type == "full" else "Législatives"
+def elPlannedEmbed(vote: nsa.Vote) -> discord.Embed:
+    __type = "Présidentielles" if vote.type == "full" else "Législatives"
 
     description = f"""
     **Type:** {__type}
-    **ID de l'élection:** `{election.id}` (nécessaire pour se présenter)
+    **ID de l'élection:** `{vote.id}` (nécessaire pour se présenter)
 
     **Vote associé:** `{vote.id}` (nécessaire pour voter)
-    **Début:** <t:{vote.startDate}:f>
-    **Fin:** <t:{vote.endDate}:f>
+    **Début:** <t:{vote.start_date}:f>
+    **Fin:** <t:{vote.end_date}:f>
     """
 
     return discord.Embed(

@@ -4,8 +4,7 @@ python-dotenv
 requests
 
 # nsarchive
-nsarchive==3.0.0b2
+nsa-fusion==1.0.0
 
 # Discord
-audioop-lts
 py-cord
