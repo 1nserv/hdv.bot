@@ -10,6 +10,8 @@ from nsarchive import mandate
 
 from bot import embeds
 from bot.utils import entities, state, get_ts, get_dt
+from bot.views import panel
+
 
 class OpenVoteModal(discord.ui.Modal):
     def __init__(self):
@@ -122,6 +124,11 @@ class ManageVoteView(ui.View):
             user = entities.get_user(NSID(itx.user.id))
 
             vote = state.get_vote(self.vote.id)
+
+            if "0" in self.values and len(self.values) > 1:
+                await itx.followup.send(embed = embeds.fail("Vous ne pouvez pas voter blanc en même temps que d'autres options."), ephemeral = True)
+                return
+
             vote.add_votes(user.id, *tuple(self.values))
             vote.save()
 
@@ -144,13 +151,44 @@ class ManageVoteView(ui.View):
             user = entities.get_user(NSID(itx.user.id))
 
             if not user.position.permissions.manage_votes:
-                await itx.followup.send(embed = embeds.error("Vous n'avez pas la permission de gérer les votes."), ephemeral = True)
+                await itx.followup.send(embed = embeds.fail("Vous n'avez pas la permission de gérer les votes."), ephemeral = True)
                 return
 
             vote = state.get_vote(self.vote.id)
             vote.close()
 
             await itx.followup.send(embed = embeds.success(), ephemeral = True)
+
+    class SubmitCandidacyButton(discord.ui.Button):
+        def __init__(self, vote: nsa.Vote):
+            super().__init__(
+                style = discord.ButtonStyle.green,
+                label = "Se présenter",
+                row = 2
+            )
+
+            self.vote = vote
+
+        async def callback(self, itx: discord.Interaction):
+            user = entities.get_user(NSID(itx.user.id))
+            candidate = state.get_candidate(user.id)
+
+            if not user.position.permissions.citizen:
+                await itx.response.send(embed = embeds.fail("Vous n'avez pas la permission de vous présenter."), ephemeral = True)
+                return
+
+            if not candidate:
+                candidate = state.create_candidate(user.id)
+
+            if candidate.current:
+                await itx.response.send(embed = embeds.fail("Vous êtes déjà candidat à une élection."), ephemeral = True)
+                return
+
+            if not candidate.party:
+                await itx.response.send(embed = embeds.fail("Vous devez être membre d'un parti pour vous présenter."), ephemeral = True)
+                return
+
+            await itx.response.send_modal(panel.SubmitCandidacyModal(candidate, self.vote.id))
 
 
     class ConvertButton(discord.ui.Button):
@@ -166,7 +204,7 @@ class ManageVoteView(ui.View):
         async def callback(self, itx: discord.Interaction):
             await itx.response.send_message(embed = embeds.elections.elTypePresentationEmbed(), view = ConvertVoteView(self.vote), ephemeral = True)
 
-    def __init__(self, vote: nsa.Vote, author: nsa.User):
+    def __init__(self, vote: nsa.Vote, author: nsa.User = None):
         super().__init__(timeout = 120, disable_on_timeout = True)
 
         if vote.end_date <= round(time.time()):
@@ -174,6 +212,10 @@ class ManageVoteView(ui.View):
 
         if len(vote.options) > 1 and vote.start_date < round(time.time()):
             self.add_item(self.AddVoteSelect(vote))
+
+        if not author:
+            self.add_item(self.SubmitCandidacyButton(vote))
+            return
 
         __close_button_added: bool = False
 
@@ -208,7 +250,7 @@ class ConvertVoteView(discord.ui.View):
             user = entities.get_user(NSID(itx.user.id))
 
             if not user.position.permissions.manage_votes:
-                await itx.followup.send(embed = embeds.error("Vous n'avez pas la permission de gérer les votes."), ephemeral = True)
+                await itx.followup.send(embed = embeds.fail("Vous n'avez pas la permission de gérer les votes."), ephemeral = True)
                 return
 
             vote = self.vote

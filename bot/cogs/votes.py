@@ -15,7 +15,7 @@ class VotesCog(commands.Cog):
     vote_cmds = discord.SlashCommandGroup(name = "votes")
 
     @commands.slash_command(name = "vote")
-    async def vote(self, ctx: discord.ApplicationContext, vote: str):
+    async def vote(self, ctx: discord.ApplicationContext, vote: str, ephemeral: bool | None = True):
         log(f"{ctx.user.name} ({NSID(ctx.user.id)}) utilise /vote")
         try:
             await ctx.defer()
@@ -29,7 +29,10 @@ class VotesCog(commands.Cog):
                 await ctx.send_followup(f"Le vote {_vote} n'existe pas.")
                 return
 
-            await ctx.send_followup(embed = embeds.votes.voteProposalsEmbed(vote), view = vw.ManageVoteView(vote, user), ephemeral = True)
+            if vote.type in ('partial', 'full'):
+                await ctx.send_followup(embed = embeds.votes.electionProposalsEmbed(vote), view = vw.ManageVoteView(vote, user if ephemeral else None), ephemeral = ephemeral)
+            else:
+                await ctx.send_followup(embed = embeds.votes.voteProposalsEmbed(vote), view = vw.ManageVoteView(vote, user if ephemeral else None), ephemeral = ephemeral)
         except Exception as e:
             await ctx.channel.send(embed = embeds.fail("Une erreur est survenue."))
             fatalerror(e)

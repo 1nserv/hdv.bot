@@ -4,7 +4,7 @@ python-dotenv
 requests
 
 # nsarchive
-nsa-fusion==1.0.0
+nsa-fusion>=1.0.4
 
 # Discord
 py-cord
