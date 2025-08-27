@@ -25,6 +25,7 @@ CATEGORIES = {
 
 CHANNELS = {
     'party_echo': 1257267147260825640,
+    'election_echo': 1257267147260825640,
     'trash': 1267929035212853288
 }
 

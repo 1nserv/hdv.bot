@@ -3,9 +3,10 @@ import time
 import discord
 
 import nsarchive as nsa
+from nsarchive.models.base import NSID
 
 from bot import embeds, settings
-from bot.utils import entities, state
+from bot.utils import entities, state, warn
 
 
 class NewPartyModal(discord.ui.Modal):

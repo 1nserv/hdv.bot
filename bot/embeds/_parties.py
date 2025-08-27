@@ -4,9 +4,20 @@ import nsarchive as nsa
 
 from .func import *
 from bot import settings
+from bot.utils import state
 
 
-def partyListEmbed(parties: list[tuple[nsa.Organization, nsa.Party | None]]):
+def partyListEmbed(groups: list[nsa.Organization]):
+    parties: list[tuple[nsa.Organization, nsa.Party]] = []
+
+    for grp in groups:
+        party = state.get_party(grp.id)
+
+        if not party:
+            continue
+
+        parties.append((grp, party))
+
     description = ""
 
     for group, party in parties:

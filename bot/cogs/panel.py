@@ -45,7 +45,7 @@ class PartyCog(commands.Cog):
                 group = None
                 candidate = state.add_candidate(user.id)
 
-            await ctx.send_followup(embed = embeds.elections.panelEmbed(user, group, candidate), view = dw.PanelView(group, candidate))
+            await ctx.send_followup(embed = embeds.elections.panelEmbed(user, group, candidate), view = dw.PanelView(user))
         except Exception as e:
             await ctx.channel.send(embed = embeds.fail("Une erreur est survenue."))
             fatalerror(e)
@@ -57,12 +57,8 @@ class PartyCog(commands.Cog):
             await ctx.defer()
 
             groups: list[nsa.Organization] = entities.fetch_groups(position = 'parti')
-            parties: list[nsa.Party | None] = []
 
-            for grp in groups:
-                parties.append(state.get_party(grp.id))
-
-            await ctx.send_followup(embed = embeds.parties.partyListEmbed(list(zip(groups, parties))))
+            await ctx.send_followup(embed = embeds.parties.partyListEmbed(groups), view = dw.SelectPartyView(), ephemeral = True)
         except Exception as e:
             await ctx.channel.send(embed = embeds.fail("Une erreur est survenue."))
             fatalerror(e)

@@ -159,10 +159,24 @@ class ManageVoteView(ui.View):
 
             await itx.followup.send(embed = embeds.success(), ephemeral = True)
 
+    class ConvertButton(discord.ui.Button):
+        def __init__(self, vote: nsa.Vote):
+            super().__init__(
+                style = discord.ButtonStyle.gray,
+                label = "Convertir",
+                row = 2
+            )
+
+            self.vote = vote
+
+        async def callback(self, itx: discord.Interaction):
+            await itx.response.send_message(embed = embeds.elections.elTypePresentationEmbed(), view = ConvertVoteView(self.vote), ephemeral = True)
+
+
     class SubmitCandidacyButton(discord.ui.Button):
         def __init__(self, vote: nsa.Vote):
             super().__init__(
-                style = discord.ButtonStyle.green,
+                style = discord.ButtonStyle.blurple,
                 label = "Se présenter",
                 row = 2
             )
@@ -188,21 +202,37 @@ class ManageVoteView(ui.View):
                 await itx.response.send(embed = embeds.fail("Vous devez être membre d'un parti pour vous présenter."), ephemeral = True)
                 return
 
-            await itx.response.send_modal(panel.SubmitCandidacyModal(candidate, self.vote.id))
+            await itx.response.send_modal(panel.SubmitCandidacyModal(candidate, self.vote))
 
-
-    class ConvertButton(discord.ui.Button):
+    class CancelCandidacyButton(discord.ui.Button):
         def __init__(self, vote: nsa.Vote):
             super().__init__(
-                style = discord.ButtonStyle.gray,
-                label = "Convertir",
+                style = discord.ButtonStyle.red,
+                label = "Annuler ma candidature",
                 row = 2
             )
 
             self.vote = vote
 
         async def callback(self, itx: discord.Interaction):
-            await itx.response.send_message(embed = embeds.elections.elTypePresentationEmbed(), view = ConvertVoteView(self.vote), ephemeral = True)
+            user = entities.get_user(NSID(itx.user.id))
+            candidate = state.get_candidate(user.id)
+
+            if not candidate:
+                await itx.response.send(embed = embeds.fail("Vous n'êtes pas candidat à une élection."), ephemeral = True)
+                return
+
+            if candidate.current != self.vote.id:
+                await itx.response.send(embed = embeds.fail("Vous n'êtes pas candidat à cette élection."), ephemeral = True)
+                return
+
+            candidate.current = None
+            candidate.save()
+
+            self.vote.options.pop(str(candidate.id), None)
+            self.vote.save()
+
+            await itx.response.send(embed = embeds.success(), ephemeral = True)
 
     def __init__(self, vote: nsa.Vote, author: nsa.User = None):
         super().__init__(timeout = 120, disable_on_timeout = True)

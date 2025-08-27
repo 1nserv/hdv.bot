@@ -6,7 +6,9 @@ from nsarchive.models.base import *
 from nsarchive import mandate
 
 from bot import embeds, settings
-from bot.utils import entities, state
+from bot.utils import entities, state, warn
+from bot.views import parties as pw
+
 
 class SubmitCandidacyModal(discord.ui.Modal):
     def __init__(self, candidate: nsa.Candidate, election: nsa.Vote = None):
@@ -61,7 +63,7 @@ class SubmitCandidacyModal(discord.ui.Modal):
         candidate.current = vote.id
         candidate.save()
 
-        channel = itx.guild.get_channel(settings.CHANNELS['party_echo'])
+        channel = itx.guild.get_channel(settings.CHANNELS['election_echo'])
 
         await itx.followup.send(embed = embeds.elections.candidacySubmittedEmbed(party), ephemeral = True)
         await channel.send(embed = embeds.elections.newCandidateEmbed(
@@ -73,12 +75,84 @@ class SubmitCandidacyModal(discord.ui.Modal):
             speech = self.discours.value
         ))
 
+
+
+class SelectPartyView(discord.ui.View):
+    class PartySelect(discord.ui.Select):
+        def __init__(self):
+            super().__init__(placeholder = "Choisissez un parti", options = [])
+
+            self.add_option(label = "Créer mon parti", value = "create", emoji = "\u2795")
+
+            parties = entities.fetch_groups(position = 'parti')
+
+            for grp in parties:
+                self.add_option(label = grp.name, value = str(grp.id))
+
+        async def callback(self, itx: discord.Interaction):
+            if self.values[0] == "create":
+                await itx.response.send_modal(pw.NewPartyModal())
+            else:
+                party = state.get_party(NSID(self.values[0]))
+
+                user = entities.get_user(NSID(itx.user.id))
+                candidate = state.get_candidate(NSID(itx.user.id))
+                party = state.get_party(NSID(self.values[0]))
+                group = entities.get_group(party.id)
+
+                if not party:
+                    await itx.response.send(embed = embeds.fail("Le parti spécifié n'existe pas."), ephemeral = True)
+                    return
+
+                if not user:
+                    user = entities.create_user(NSID(itx.user.id), itx.user.display_name)
+
+                if not user.position.permissions.citizen:
+                    await itx.response.send(embed = embeds.fail("Vous devez être un citoyen."), ephemeral = True)
+                    return
+
+                if not candidate:
+                    candidate = state.add_candidate(user.id)
+
+                _org = candidate.party
+                if _org:
+                    if _org.id == party.id:
+                        await itx.response.send(embed = embeds.parties.alreadyInPartyEmbed(), ephemeral = True)   
+                    else:
+                        await itx.response.send(embed = embeds.parties.inAnotherPartyEmbed(), ephemeral = True)
+
+                    return
+                else:
+                    group.add_member(user.id)
+                    candidate.party = party.id
+                    candidate.save()
+
+
+                party_role = itx.guild.get_role(party.additional['role'])
+                await itx.user.add_roles(party_role)
+
+                party_channel = itx.guild.get_channel(party.additional['channel'])
+
+                for thread in party_channel.threads:
+                    if thread.name == "Informations":
+                        await thread.send(embed = embeds.parties.memberJoinedEmbed(itx.user, party), content = itx.user.mention)
+                        break
+                else:
+                    warn(f"Impossible de retrouver le thread info de {party.name}")
+
+                await itx.response.send(embed = embeds.success(), ephemeral = True)
+
+    def __init__(self):
+        super().__init__(timeout = 120, disable_on_timeout = True)
+
+        self.add_item(self.PartySelect())
+
 class PanelView(ui.View):
     class SubmitCandidacyButton(discord.ui.Button):
         def __init__(self, candidate: nsa.Candidate = None):
             super().__init__(
                 style = discord.ButtonStyle.green,
-                label = "Se présenter",
+                label = "Candidater",
                 disabled = mandate.get_phase() not in ('paix', 'undefined') or not candidate
             )
 
@@ -105,11 +179,79 @@ class PanelView(ui.View):
 
             await itx.response.send_modal(SubmitCandidacyModal(candidate))
 
-    def __init__(self, group: nsa.Organization = None, candidate: nsa.Candidate = None):
+    class JoinPartyButton(discord.ui.Button):
+        def __init__(self):
+            super().__init__(
+                style = discord.ButtonStyle.blurple,
+                label = "Rejoindre un parti"
+            )
+
+        async def callback(self, itx: discord.Interaction):
+            _groups = entities.fetch_groups(position = 'parti')
+            await itx.response.send(embed = embeds.parties.partyListEmbed(_groups), view = SelectPartyView(), ephemeral = True)
+
+    class LeavePartyButton(discord.ui.Button):
+        def __init__(self):
+            super().__init__(
+                style = discord.ButtonStyle.red,
+                label = "Quitter mon parti"
+            )
+
+        async def callback(self, itx: discord.Interaction):
+            await itx.response.defer(ephemeral = True)
+            user = entities.get_user(itx.user.id)
+            candidate = state.get_candidate(user.id)
+            party = candidate.party
+
+            if not party:
+                await itx.followup.send(embed = embeds.parties.notInAnyPartyEmbed(), ephemeral = True)
+                return
+
+            group = entities.get_group(party.id)
+
+            _transmission: bool = False
+
+            if group.owner.id == user.id:
+                for _member_id, _member in group.members.items():
+                    if _member.manager:
+                        group.set_owner(entities.get_user(_member_id))
+
+                        _transmission = True
+                else:
+                    await itx.followup.send(embed = embeds.fail("Accordez le grade Gérant à l'un des membres du parti pour qu'il en devienne automatiquement président à votre départ. Vous pouvez le faire via `/party promote_member`."))
+                    return
+            else:
+                group.remove_member(group.members[user.id])
+
+            candidate.party = None
+            candidate.save()
+
+            party_role = itx.guild.get_role(group.additional['role'])
+            await itx.user.remove_roles(party_role)
+
+            party_channel = itx.guild.get_channel(group.additional['channel'])
+
+            for thread in party_channel.threads:
+                if thread.name == "Informations":
+                    if _transmission:
+                        await thread.send(embed = embeds.parties.partyTransmittedEmbed(group), content = itx.user.mention)
+                    else:
+                        await thread.send(embed = embeds.parties.memberLeftEmbed(itx.user, group), content = itx.user.mention)
+            else:
+                warn(f"Impossible de retrouver le thread info de {group.name}")
+
+            await itx.followup.send(embed = embeds.success(), ephemeral = True)
+
+    def __init__(self, user: nsa.User):
         super().__init__(timeout = 300)
 
-        if candidate and candidate.party:
-            self.add_item(self.SubmitCandidacyButton(candidate))
+        candidate = state.get_candidate(user.id)
 
-        self.group = group
-        self.candidate = candidate
+        if not candidate:
+            candidate = state.add_candidate(user.id)
+
+        if candidate.party:
+            self.add_item(self.SubmitCandidacyButton(candidate))
+            self.add_item(self.LeavePartyButton())
+        else:
+            self.add_item(self.JoinPartyButton())
