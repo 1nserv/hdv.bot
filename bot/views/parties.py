@@ -157,3 +157,75 @@ class NewPartyModal(discord.ui.Modal):
         await __echo__channel.send(embed = embeds.parties.partyCreated_LOG(grp, self.prom.value))
 
         await itx.followup.send(embed = embeds.success(), ephemeral = True)
+
+
+class JoinRequestView(discord.ui.View):
+    class AcceptRequestButton(discord.ui.Button):
+        def __init__(self, member: discord.Member, party: nsa.Organization):
+            super().__init__(label = "Accepter", style = discord.ButtonStyle.green)
+            self.member = member
+            self.party = party
+
+        async def callback(self, itx: discord.Interaction):
+            await itx.response.defer()
+
+            # On actualise chaque objet au cas où des modifications aient été effectuées entre l'envoi et la réponse
+            party = state.get_party(self.party.id)
+            user = entities.get_user(self.member.id)
+            author = entities.get_user(itx.user.id)
+            candidate = state.get_candidate(user.id)
+            group = entities.get_group(party.id)
+
+            if not party:
+                await itx.followup.send(embed = embeds.fail("Le parti spécifié n'existe plus."), ephemeral = True)
+                return
+
+            if not user:
+                await itx.followup.send(embed = embeds.fail("L'utilisateur spécifié n'existe plus."), ephemeral = True)
+                return
+
+            if not author:
+                # "Vous n'existez plus" ?
+                author = entities.add_user(itx.user.id)
+
+            if not candidate:
+                candidate = state.add_candidate(user.id)
+
+            if candidate.party:
+                await itx.followup.send(embed = embeds.parties.inAnotherPartyEmbed(True), ephemeral = True)
+                return
+
+            _auth = group.members.get(author.id)
+
+            if not (_auth and (_auth.manager or _auth.level > 1)):
+                await itx.followup.send(embed = embeds.fail("Vous n'avez plus la permission d'accepter des membres dans ce parti."), ephemeral = True)
+                return
+
+            group.add_member(user.id)
+            candidate.party = party
+            candidate.save()
+
+
+            party_role = itx.guild.get_role(party.additional['role'])
+            await self.member.add_roles(party_role)
+
+            party_channel = itx.guild.get_channel(party.additional['channel'])
+
+            for thread in party_channel.threads:
+                if thread.name == "Informations":
+                    await thread.send(embed = embeds.parties.memberJoinedEmbed(self.member, party), content = self.member.mention)
+                    break
+            else:
+                warn(f"Impossible de retrouver le thread info de {party.name}")
+
+            await itx.response.send_message(embed = embeds.success(), ephemeral = True)
+
+            self.party.add_member(self.member.id)
+            await itx.followup.send(embed = embeds.success(), ephemeral = True)
+
+    def __init__(self, member: discord.Member, party: nsa.Organization):
+        super().__init__(timeout = 86400, disable_on_timeout = True)
+        self.member = member
+        self.party = party
+
+        self.add_item(self.AcceptRequestButton(member, party))

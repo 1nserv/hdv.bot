@@ -37,13 +37,20 @@ class PartyCog(commands.Cog):
             await ctx.defer(ephemeral = True)
 
             user = entities.get_user(NSID(ctx.author.id))
+
+            if not user:
+                user = entities.create_user(NSID(ctx.author.id), ctx.author.display_name)
+
             candidate = state.get_candidate(user.id)
 
-            if candidate:
+            if not candidate:
+                candidate = state.add_candidate(user.id)
+
+            if candidate.party:
                 group = entities.get_group(candidate.party.id)
             else:
                 group = None
-                candidate = state.add_candidate(user.id)
+
 
             await ctx.send_followup(embed = embeds.elections.panelEmbed(user, group, candidate), view = dw.PanelView(user))
         except Exception as e:
@@ -71,6 +78,15 @@ class PartyCog(commands.Cog):
 
             if not author:
                 author = entities.create_user(ctx.author.id, ctx.author.display_name)
+
+            candidate = state.get_candidate(author.id)
+
+            if not candidate:
+                candidate = state.add_candidate(author.id)
+
+            if candidate.party:
+                await ctx.send_response(embed = embeds.fail("Vous êtes déjà membre d'un parti."), ephemeral = True)
+                return
 
             if not author.position.permissions.create_parties:
                 await ctx.send_response(embed = embeds.fail("Vous n'avez pas la permission de créer un parti."), ephemeral = True)
@@ -108,6 +124,7 @@ class PartyCog(commands.Cog):
                 candidate = state.add_candidate(user.id)
 
             _org = candidate.party
+
             if _org:
                 if _org.id == party.id:
                     await ctx.send_followup(embed = embeds.parties.alreadyInPartyEmbed(True), ephemeral = True)   

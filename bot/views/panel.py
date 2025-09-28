@@ -65,6 +65,7 @@ class SubmitCandidacyModal(discord.ui.Modal):
 
         channel = itx.guild.get_channel(settings.CHANNELS['election_echo'])
 
+        await itx.message.edit(embed = embeds.elections.panelEmbed(user, group, candidate), view = PanelView(user))
         await itx.followup.send(embed = embeds.elections.candidacySubmittedEmbed(party), ephemeral = True)
         await channel.send(embed = embeds.elections.newCandidateEmbed(
             vote,
@@ -101,14 +102,14 @@ class SelectPartyView(discord.ui.View):
                 group = entities.get_group(party.id)
 
                 if not party:
-                    await itx.response.send(embed = embeds.fail("Le parti spécifié n'existe pas."), ephemeral = True)
+                    await itx.response.send_message(embed = embeds.fail("Le parti spécifié n'existe pas."), ephemeral = True)
                     return
 
                 if not user:
                     user = entities.create_user(NSID(itx.user.id), itx.user.display_name)
 
-                if not user.position.permissions.citizen:
-                    await itx.response.send(embed = embeds.fail("Vous devez être un citoyen."), ephemeral = True)
+                if not user.position.permissions.create_parties:
+                    await itx.response.send_message(embed = embeds.fail("Vous devez être un citoyen."), ephemeral = True)
                     return
 
                 if not candidate:
@@ -117,30 +118,19 @@ class SelectPartyView(discord.ui.View):
                 _org = candidate.party
                 if _org:
                     if _org.id == party.id:
-                        await itx.response.send(embed = embeds.parties.alreadyInPartyEmbed(), ephemeral = True)   
+                        await itx.response.send_message(embed = embeds.parties.alreadyInPartyEmbed(), ephemeral = True)   
                     else:
-                        await itx.response.send(embed = embeds.parties.inAnotherPartyEmbed(), ephemeral = True)
+                        await itx.response.send_message(embed = embeds.parties.inAnotherPartyEmbed(), ephemeral = True)
 
                     return
                 else:
-                    group.add_member(user.id)
-                    candidate.party = party.id
-                    candidate.save()
+                    for id, member in group.members.items():
+                        if member.manager or member.level > 1:
+                            _member = itx.guild.get_member(int(id, 16))
+                            await _member.send(embed = embeds.parties.newMemberRequestEmbed(user, group), view = pw.JoinRequestView())
 
-
-                party_role = itx.guild.get_role(party.additional['role'])
-                await itx.user.add_roles(party_role)
-
-                party_channel = itx.guild.get_channel(party.additional['channel'])
-
-                for thread in party_channel.threads:
-                    if thread.name == "Informations":
-                        await thread.send(embed = embeds.parties.memberJoinedEmbed(itx.user, party), content = itx.user.mention)
-                        break
-                else:
-                    warn(f"Impossible de retrouver le thread info de {party.name}")
-
-                await itx.response.send(embed = embeds.success(), ephemeral = True)
+                    await itx.message.edit(embed = embeds.elections.panelEmbed(user, group, candidate), view = PanelView(user))
+                    await itx.response.send_message(embed = embeds.success(), ephemeral = True)
 
     def __init__(self):
         super().__init__(timeout = 120, disable_on_timeout = True)
@@ -165,7 +155,7 @@ class PanelView(ui.View):
             user = entities.get_user(NSID(itx.user.id))
             candidate = self.candidate
 
-            if not (user and user.position.permissions.citizen):
+            if not (user and user.position.permissions.create_parties):
                 await itx.followup.send("Vous ne détenez pas la citoyenneté et ne pouvez donc pas vous présenter.")
                 return
 
@@ -188,7 +178,7 @@ class PanelView(ui.View):
 
         async def callback(self, itx: discord.Interaction):
             _groups = entities.fetch_groups(position = 'parti')
-            await itx.response.send(embed = embeds.parties.partyListEmbed(_groups), view = SelectPartyView(), ephemeral = True)
+            await itx.response.send_message(embed = embeds.parties.partyListEmbed(_groups), view = SelectPartyView(), ephemeral = True)
 
     class LeavePartyButton(discord.ui.Button):
         def __init__(self):

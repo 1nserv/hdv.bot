@@ -41,6 +41,30 @@ def panelEmbed(user: nsa.User, group: nsa.Organization | None, candidate: nsa.Ca
         color = color
     )
 
+
+def candidateInfoEmbed(
+        candidate: nsa.Candidate,
+        user: nsa.User,
+        profile: discord.Member,
+        group: nsa.Organization,
+    ) -> discord.Embed:
+
+    description = f"""
+    **Membre:** {profile.mention}
+    **Groupe:** {group.name}
+    **Candidature:** {f"`{candidate.current}`" if candidate and candidate.current else "Aucune"}
+    """
+
+    embed = discord.Embed(
+        title = f"Nouveau candidat: {user.name}",
+        description = description,
+        color = candidate.party.color
+    )
+
+    return embed.set_thumbnail(url = profile.avatar.url)
+
+
+
 def candidacySubmittedEmbed(party: nsa.Party):
     return discord.Embed(
         description = ":white_check_mark: Votre candidature est retenue !",

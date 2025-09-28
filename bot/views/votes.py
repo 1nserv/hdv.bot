@@ -178,28 +178,32 @@ class ManageVoteView(ui.View):
             super().__init__(
                 style = discord.ButtonStyle.blurple,
                 label = "Se présenter",
-                row = 2
+                row = 3
             )
 
             self.vote = vote
 
         async def callback(self, itx: discord.Interaction):
             user = entities.get_user(NSID(itx.user.id))
-            candidate = state.get_candidate(user.id)
 
-            if not user.position.permissions.citizen:
-                await itx.response.send(embed = embeds.fail("Vous n'avez pas la permission de vous présenter."), ephemeral = True)
+            if not user:
+                user = entities.create_user(NSID(itx.user.id), itx.user.display_name)
+
+            if not user.position.permissions.create_parties:
+                await itx.response.send_message(embed = embeds.fail("Vous n'avez pas la permission de vous présenter."), ephemeral = True)
                 return
 
+            candidate = state.get_candidate(user.id)
+
             if not candidate:
-                candidate = state.create_candidate(user.id)
+                candidate = state.add_candidate(user.id)
 
             if candidate.current:
-                await itx.response.send(embed = embeds.fail("Vous êtes déjà candidat à une élection."), ephemeral = True)
+                await itx.response.send_message(embed = embeds.fail("Vous êtes déjà candidat à une élection."), ephemeral = True)
                 return
 
             if not candidate.party:
-                await itx.response.send(embed = embeds.fail("Vous devez être membre d'un parti pour vous présenter."), ephemeral = True)
+                await itx.response.send_message(embed = embeds.fail("Vous devez être membre d'un parti pour vous présenter."), ephemeral = True)
                 return
 
             await itx.response.send_modal(panel.SubmitCandidacyModal(candidate, self.vote))
@@ -208,8 +212,8 @@ class ManageVoteView(ui.View):
         def __init__(self, vote: nsa.Vote):
             super().__init__(
                 style = discord.ButtonStyle.red,
-                label = "Annuler ma candidature",
-                row = 2
+                label = "Se retirer",
+                row = 3
             )
 
             self.vote = vote
@@ -219,11 +223,11 @@ class ManageVoteView(ui.View):
             candidate = state.get_candidate(user.id)
 
             if not candidate:
-                await itx.response.send(embed = embeds.fail("Vous n'êtes pas candidat à une élection."), ephemeral = True)
+                await itx.response.send_message(embed = embeds.fail("Vous n'êtes pas candidat à une élection."), ephemeral = True)
                 return
 
             if candidate.current != self.vote.id:
-                await itx.response.send(embed = embeds.fail("Vous n'êtes pas candidat à cette élection."), ephemeral = True)
+                await itx.response.send_message(embed = embeds.fail("Vous n'êtes pas candidat à cette élection."), ephemeral = True)
                 return
 
             candidate.current = None
@@ -232,7 +236,7 @@ class ManageVoteView(ui.View):
             self.vote.options.pop(str(candidate.id), None)
             self.vote.save()
 
-            await itx.response.send(embed = embeds.success(), ephemeral = True)
+            await itx.response.send_message(embed = embeds.success(), ephemeral = True)
 
     def __init__(self, vote: nsa.Vote, author: nsa.User = None):
         super().__init__(timeout = 120, disable_on_timeout = True)
@@ -240,11 +244,14 @@ class ManageVoteView(ui.View):
         if vote.end_date <= round(time.time()):
             return
 
-        if len(vote.options) > 1 and vote.start_date < round(time.time()):
+        if len(vote.options) > 1 and vote.start_date < round(time.time()) < vote.end_date:
             self.add_item(self.AddVoteSelect(vote))
 
         if not author:
-            self.add_item(self.SubmitCandidacyButton(vote))
+            if vote.type in ('full', 'partial') and vote.start_date - 7200 > round(time.time()):
+                self.add_item(self.SubmitCandidacyButton(vote))
+                self.add_item(self.CancelCandidacyButton(vote))
+
             return
 
         __close_button_added: bool = False
@@ -259,6 +266,18 @@ class ManageVoteView(ui.View):
 
             if not __close_button_added:
                 self.add_item(self.CloseVoteButton(vote))
+
+        if author:
+            candidate = state.get_candidate(author.id)
+
+            if not candidate:
+                candidate = state.add_candidate(author.id)
+
+            if author.position.permissions.create_parties and candidate.party:
+                if candidate.current == vote.id:
+                    self.add_item(self.CancelCandidacyButton(vote))
+                else:
+                    self.add_item(self.SubmitCandidacyButton(vote))
 
 class ConvertVoteView(discord.ui.View):
     class ChooseTypeSelect(discord.ui.Select):
